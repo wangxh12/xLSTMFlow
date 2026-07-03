@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# Data
+data/*
+!data/README.md
+!data/.gitkeep
+
+# Checkpoints / model weights
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# Results / logs
+results/
+test_results/
+logs/
+result_anomaly_detection*.txt
+*.log
+
+# Large generated files
+*.npy
+*.npz
+*.pkl
+*.pickle
+*.csv
+*.xlsx
+
+# OS
+.DS_Store
+Thumbs.db
