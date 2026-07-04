@@ -66,6 +66,7 @@ class ALFAReconSegLoader(Dataset):
 
     def __init__(
         self,
+        args,
         root_path,
         win_size,
         step=1,
@@ -76,6 +77,7 @@ class ALFAReconSegLoader(Dataset):
     ):
         assert flag in ["train", "val", "test"], f"Unsupported flag: {flag}"
 
+        self.args = args
         self.root_path = Path(root_path)
         self.win_size = int(win_size)
         self.step = int(step)

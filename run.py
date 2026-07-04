@@ -224,7 +224,8 @@ if __name__ == '__main__':
         from exp.exp_anomaly_detection_pred import Exp_Anomaly_Detection_Pred
         Exp = Exp_Anomaly_Detection_Pred
 
-
+    print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(args.model_id))
+    
     if args.is_training:
         for ii in range(args.itr):
             # setting record of experiments
