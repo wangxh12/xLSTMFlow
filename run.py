@@ -165,6 +165,37 @@ if __name__ == '__main__':
     
     parser.add_argument('--fm_steps', type=int, default=8, help='Euler steps for flow matching sampling')
 
+
+    # 平滑
+    parser.add_argument('--score_smooth', type=str, default='none',
+                    choices=['none', 'ewma', 'ma'],
+                    help='score smoothing method for anomaly detection prediction')
+
+    parser.add_argument('--ewma_alpha', type=float, default=0.2,
+                        help='alpha for EWMA score smoothing')
+
+    parser.add_argument('--smooth_window', type=int, default=5,
+                        help='window size for moving average score smoothing')
+
+    parser.add_argument('--threshold_source', type=str, default='train',
+                        choices=['train', 'combined'],
+                        help='use train scores or combined train+test scores to calculate threshold')
+
+
+    # 机制理论
+    parser.add_argument('--threshold_method', type=str, default='percentile',
+                    choices=['percentile', 'spot'],
+                    help='threshold method for anomaly detection')
+
+    parser.add_argument('--spot_level', type=float, default=0.98,
+                        help='initial high quantile for SPOT/POT, e.g. 0.95, 0.98')
+
+    parser.add_argument('--spot_q', type=float, default=0.001,
+                        help='risk probability for SPOT/POT, larger q gives lower threshold')
+
+    parser.add_argument('--spot_min_peaks', type=int, default=20,
+                        help='minimum number of peaks for fitting GPD')
+
     args = parser.parse_args()
     if torch.cuda.is_available() and args.use_gpu:
         args.device = torch.device('cuda:{}'.format(args.gpu))

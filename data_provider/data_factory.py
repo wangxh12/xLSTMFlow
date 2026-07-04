@@ -1,11 +1,17 @@
-from data_provider.data_loader import MinnesotaSegLoader, MinnesotaPredLoader,PredNavAltSegLoader, ThorNavAltPredLoader
+from data_provider.data_loader import MinnesotaSegLoader, MinnesotaPredLoader,PredNavAltSegLoader, \
+    ThorNavAltPredLoader
 from torch.utils.data import DataLoader
+from data_provider.alfa import ALFAReconSegLoader, ALFAPredSegLoader
+
 
 data_dict = {
     'Minnesota': MinnesotaSegLoader,
     'MinnesotaPred': MinnesotaPredLoader,
     "PredNavAlt": PredNavAltSegLoader,
-    'ThorNavAltPred': ThorNavAltPredLoader
+    'ThorNavAltPred': ThorNavAltPredLoader,
+    'AlfaPred': ALFAPredSegLoader,
+    "AlfaRecon": ALFAReconSegLoader,
+    
 }
 
 

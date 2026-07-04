@@ -7,6 +7,238 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
+
+class AlfaPredLoader(Dataset):
+    """
+    ALFA predictive anomaly detection dataset.
+
+    训练:
+        data/alfa/train/*.csv
+        全部 no_failure，label 全 0
+
+    测试:
+        data/alfa/test/*.csv
+        每次只测试一个文件，通过 args.alfa_test_file 指定
+
+    支持两种模式:
+        1. all-to-all:
+            18 维输入 -> 18 维预测
+            --alfa_target all
+            --enc_in 18 --c_out 18
+
+        2. multivariate-to-single:
+            18 维输入 -> 1 维预测
+            --alfa_target field.alt_error
+            --enc_in 18 --c_out 1
+    """
+
+    feature_cols = [
+        "field.angular_velocity.x",
+        "field.angular_velocity.y",
+        "field.angular_velocity.z",
+        "field.linear_acceleration.x",
+        "field.linear_acceleration.y",
+        "field.linear_acceleration.z",
+        "field.magnetic_field.x",
+        "field.magnetic_field.y",
+        "field.magnetic_field.z",
+        "field.fluid_pressure",
+        "field.temperature",
+        "field.measured.pitch",
+        "field.measured.roll",
+        "field.measured.yaw",
+        "field.alt_error",
+        "field.aspd_error",
+        "field.xtrack_error",
+        "field.wp_dist",
+    ]
+
+    def __init__(
+        self,
+        root_path,
+        flag="train",
+        size=None,
+        win_size=None,
+        pred_len=None,
+        step=1,
+        args=None,
+    ):
+        super().__init__()
+
+        assert flag in ["train", "val", "test"]
+        self.root_path = root_path
+        self.flag = flag
+        self.args = args
+        self.step = step
+
+        if size is not None:
+            self.seq_len = int(size[0])
+            self.pred_len = int(size[1])
+        else:
+            self.seq_len = int(win_size)
+            self.pred_len = int(pred_len)
+
+        self.win_size = self.seq_len
+
+        target = getattr(args, "alfa_target", "all") if args is not None else "all"
+
+        if target == "all":
+            self.target_cols = self.feature_cols
+        else:
+            self.target_cols = [x.strip() for x in target.split(",") if x.strip()]
+
+        self.enc_in = len(self.feature_cols)
+        self.c_out = len(self.target_cols)
+
+        train_dir = os.path.join(root_path, "train")
+        test_dir = os.path.join(root_path, "test")
+
+        all_train_files = sorted(glob.glob(os.path.join(train_dir, "*.csv")))
+        all_test_files = sorted(glob.glob(os.path.join(test_dir, "*.csv")))
+
+        if len(all_train_files) == 0:
+            raise RuntimeError(f"No train csv files found in {train_dir}")
+
+        if len(all_test_files) == 0:
+            raise RuntimeError(f"No test csv files found in {test_dir}")
+
+        # ==========================================================
+        # 文件级划分 train / val，避免同一个 flight 的窗口同时进 train 和 val
+        # ==========================================================
+        train_ratio = float(getattr(args, "alfa_train_ratio", 0.8)) if args is not None else 0.8
+        split = int(len(all_train_files) * train_ratio)
+        split = min(max(split, 1), len(all_train_files) - 1)
+
+        fit_files = all_train_files[:split]
+
+        if flag == "train":
+            self.files = all_train_files[:split]
+        elif flag == "val":
+            self.files = all_train_files[split:]
+        else:
+            test_file = getattr(args, "alfa_test_file", None) if args is not None else None
+
+            if test_file is None or test_file == "":
+                # 默认取第一个，真正批量测试时会在 exp.test() 里逐个设置 alfa_test_file
+                self.files = [all_test_files[0]]
+            else:
+                file_path = os.path.join(test_dir, test_file)
+                if not os.path.exists(file_path):
+                    raise FileNotFoundError(f"ALFA test file not found: {file_path}")
+                self.files = [file_path]
+
+        # ==========================================================
+        # scaler 只在训练 split 上 fit，不能使用 val/test
+        # ==========================================================
+        self.scaler_x = StandardScaler()
+        self.scaler_y = StandardScaler()
+
+        fit_x_list = []
+        fit_y_list = []
+
+        for fp in fit_files:
+            df = self._read_csv(fp)
+            fit_x_list.append(df[self.feature_cols].values)
+            fit_y_list.append(df[self.target_cols].values)
+
+        fit_x = np.concatenate(fit_x_list, axis=0)
+        fit_y = np.concatenate(fit_y_list, axis=0)
+
+        self.scaler_x.fit(fit_x)
+        self.scaler_y.fit(fit_y)
+
+        # ==========================================================
+        # 读取当前 flag 对应文件，不允许跨文件构造窗口
+        # ==========================================================
+        self.x_list = []
+        self.y_list = []
+        self.label_list = []
+        self.raw_lens = []
+        self.file_names = []
+
+        self.indices = []
+
+        for file_id, fp in enumerate(self.files):
+            df = self._read_csv(fp)
+
+            x = df[self.feature_cols].values.astype(np.float32)
+            y = df[self.target_cols].values.astype(np.float32)
+
+            if "label" in df.columns:
+                label = df["label"].values.astype(np.float32)
+                label = (label > 0).astype(np.float32)
+            else:
+                label = np.zeros(len(df), dtype=np.float32)
+
+            x = self.scaler_x.transform(x).astype(np.float32)
+            y = self.scaler_y.transform(y).astype(np.float32)
+
+            self.x_list.append(x)
+            self.y_list.append(y)
+            self.label_list.append(label)
+            self.raw_lens.append(len(df))
+            self.file_names.append(os.path.basename(fp))
+
+            max_start = len(df) - self.seq_len - self.pred_len + 1
+
+            if max_start <= 0:
+                continue
+
+            for start in range(0, max_start, self.step):
+                # train/val 理论上都是正常文件，不过这里再保险一次：
+                # 训练和验证只取完整正常窗口
+                if flag in ["train", "val"]:
+                    full_label = label[start:start + self.seq_len + self.pred_len]
+                    if full_label.max() > 0:
+                        continue
+
+                self.indices.append((file_id, start))
+
+        if len(self.indices) == 0:
+            raise RuntimeError(
+                f"No valid windows for ALFA flag={flag}, files={self.files}"
+            )
+
+        # 兼容你当前 exp 里的 raw_test_len = len(test_data.test)
+        # test 时只加载一个文件，所以这里成立
+        if flag == "test":
+            self.test = self.x_list[0]
+        else:
+            self.test = None
+
+    def _read_csv(self, fp):
+        df = pd.read_csv(fp)
+
+        required_cols = self.feature_cols + ["label"]
+        missing = [c for c in required_cols if c not in df.columns]
+
+        if missing:
+            raise RuntimeError(f"{fp} missing columns: {missing}")
+
+        df = df.replace([np.inf, -np.inf], np.nan)
+        df = df.ffill().bfill().fillna(0)
+
+        return df
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, index):
+        file_id, start = self.indices[index]
+
+        s_begin = start
+        s_end = s_begin + self.seq_len
+
+        r_begin = s_end
+        r_end = r_begin + self.pred_len
+
+        seq_x = self.x_list[file_id][s_begin:s_end]
+        seq_y = self.y_list[file_id][r_begin:r_end]
+        seq_label = self.label_list[file_id][r_begin:r_end]
+
+        return seq_x, seq_y, seq_label
+
+
 class ThorNavAltPredLoader(Dataset):
     """
     Thor 预测式异常检测 Dataset.
@@ -40,8 +272,8 @@ class ThorNavAltPredLoader(Dataset):
         self.win_size = win_size
         self.pred_len = pred_len
 
-        self.train_file = "ThorFlight104.csv"
-        self.test_file = "ThorFlight121.csv"
+        self.train_file = args.train_file
+        self.test_file = args.test_file
 
         self.input_fields = [
             "alt", "h", "navvn", "navve", "navvd",
