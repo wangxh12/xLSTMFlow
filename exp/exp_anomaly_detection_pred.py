@@ -78,6 +78,7 @@ class Exp_Anomaly_Detection_Pred(Exp_Basic):
         train_data, train_loader = self._get_data(flag='train')
         vali_data, vali_loader = self._get_data(flag='val')
         test_data, test_loader = self._get_data(flag='test')
+        
 
         path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(path):
